@@ -1,0 +1,581 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "id": "injection-execution",
+      "order": 1,
+      "title": "Injection & Code Execution",
+      "description": "Ways untrusted input can end up running as code, commands, or queries.",
+      "entries": [
+        {
+          "id": "sql-injection",
+          "name": "SQL Injection",
+          "baseSeverity": "critical",
+          "whatItIs": "User-controlled input is concatenated into a SQL query instead of being passed as a parameter.",
+          "howItHurtsTemplate": "An attacker can manipulate the query in {location} to read, modify, or delete data outside its intended scope, including bypassing authentication or dumping the entire database.",
+          "fixGuidanceTemplate": "Replace string concatenation/interpolation with parameterized queries or an ORM/query-builder that escapes input automatically. Never build SQL by concatenating request data.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "command-injection",
+          "name": "Command Injection",
+          "baseSeverity": "critical",
+          "whatItIs": "User input reaches a shell command (exec, spawn, system) without sanitization.",
+          "howItHurtsTemplate": "An attacker can append shell metacharacters to run arbitrary commands on the server with the app's privileges, potentially taking over the host.",
+          "fixGuidanceTemplate": "Avoid shelling out with user input entirely; use a language-native API instead. If unavoidable, use an argument-array exec form (never a shell string) and allowlist expected values.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "code-execution",
+          "name": "Arbitrary / Remote Code Execution",
+          "baseSeverity": "critical",
+          "whatItIs": "User-influenced input reaches an eval, dynamic require/import, template render, or deserialization path that can execute code.",
+          "howItHurtsTemplate": "An attacker can run arbitrary code in the app's process, leading to full compromise of the server or client session.",
+          "fixGuidanceTemplate": "Remove eval/dynamic-code paths entirely where possible. If dynamic behavior is required, use a strict allowlist or a sandboxed interpreter instead of the language's native eval.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "insecure-deserialization",
+          "name": "Insecure Deserialization",
+          "baseSeverity": "critical",
+          "whatItIs": "Untrusted data is deserialized (e.g. pickle, YAML.load, native serialization) without restriction on the types it can construct.",
+          "howItHurtsTemplate": "A crafted payload can instantiate arbitrary objects or trigger code execution during deserialization, compromising the process that deserializes it.",
+          "fixGuidanceTemplate": "Use a safe/restricted deserializer (e.g. `yaml.safe_load`, JSON instead of pickle) and validate the resulting structure against an expected schema before use.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "path-traversal",
+          "name": "Path Traversal",
+          "baseSeverity": "high",
+          "whatItIs": "A filename or path parameter from the user is used to build a filesystem path without normalization.",
+          "howItHurtsTemplate": "A request containing `../` sequences can escape the intended directory and read or write arbitrary files on disk, such as configuration files or credentials.",
+          "fixGuidanceTemplate": "Resolve the final path and verify it is still inside the intended base directory before touching the filesystem; reject any path containing traversal sequences.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "ssrf",
+          "name": "Server-Side Request Forgery",
+          "baseSeverity": "high",
+          "whatItIs": "The server makes an outbound HTTP request to a URL that is fully or partially controlled by the user.",
+          "howItHurtsTemplate": "An attacker can direct the server to make requests to internal-only services (cloud metadata endpoints, internal admin panels, databases) that aren't reachable from the outside.",
+          "fixGuidanceTemplate": "Validate and allowlist destination hosts/schemes before making the request, and block requests to private/link-local IP ranges and cloud metadata addresses.",
+          "requiresDynamicTest": true
+        },
+        {
+          "id": "missing-input-sanitization",
+          "name": "Missing Input Sanitization",
+          "baseSeverity": "medium",
+          "whatItIs": "Request input (body, query, headers, params) is used directly without validating type, length, format, or allowed characters.",
+          "howItHurtsTemplate": "This is the root cause behind most injection and rendering vulnerabilities in the app — without a validation layer, any downstream sink (query, shell, HTML, filesystem) is exposed to malformed or malicious input.",
+          "fixGuidanceTemplate": "Introduce a validation layer (schema validation library, typed request DTOs) at every entry point, and reject anything that doesn't match the expected shape before it reaches business logic.",
+          "requiresDynamicTest": false
+        }
+      ]
+    },
+    {
+      "id": "auth-session",
+      "order": 2,
+      "title": "Authentication & Session Security",
+      "description": "How users prove who they are, and how that proof is protected afterward.",
+      "entries": [
+        {
+          "id": "brute-force",
+          "name": "Brute-Force Vulnerability",
+          "baseSeverity": "high",
+          "whatItIs": "Login, OTP, or password-reset endpoints accept unlimited repeated attempts.",
+          "howItHurtsTemplate": "An attacker can script unlimited login attempts to guess passwords, PINs, or one-time codes until one succeeds.",
+          "fixGuidanceTemplate": "Add per-account and per-IP rate limiting with exponential backoff or lockout, and consider CAPTCHA after repeated failures.",
+          "requiresDynamicTest": true
+        },
+        {
+          "id": "credential-stuffing",
+          "name": "Credential Stuffing Exposure",
+          "baseSeverity": "high",
+          "whatItIs": "Login accepts any username/password pair with no defenses against automated mass login attempts using leaked credential lists.",
+          "howItHurtsTemplate": "Attackers replay breached username/password pairs from other services at scale; accounts reusing those passwords get silently taken over.",
+          "fixGuidanceTemplate": "Add rate limiting and anomaly detection on login, support MFA, and consider checking new passwords against known-breached password lists.",
+          "requiresDynamicTest": true
+        },
+        {
+          "id": "predictable-session-tokens",
+          "name": "Predictable Session Tokens",
+          "baseSeverity": "high",
+          "whatItIs": "Session or auth tokens are generated from a non-cryptographic source (e.g. incrementing IDs, `Math.random()`, timestamps).",
+          "howItHurtsTemplate": "An attacker can predict or brute-force valid session tokens and hijack other users' sessions without ever obtaining their password.",
+          "fixGuidanceTemplate": "Generate tokens using a cryptographically secure random source with sufficient entropy (e.g. 128+ bits from a CSPRNG), never from predictable inputs.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "weak-jwt-verification",
+          "name": "Weak JWT Verification",
+          "baseSeverity": "critical",
+          "whatItIs": "JWTs are decoded and trusted without verifying the signature, or the algorithm is accepted as `none`/attacker-chosen.",
+          "howItHurtsTemplate": "An attacker can forge a token claiming to be any user (including an admin) since the server never actually checks that the token was signed by it.",
+          "fixGuidanceTemplate": "Always verify the signature with a fixed, expected algorithm and the server's own secret/public key; never honor the `alg` field from the token itself.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "missing-password-hashing",
+          "name": "Missing Password Hashing",
+          "baseSeverity": "critical",
+          "whatItIs": "Passwords are stored in plain text or with a fast general-purpose hash (MD5/SHA1/SHA256 with no salt/work factor).",
+          "howItHurtsTemplate": "If the database is ever exposed, every user's real password is immediately usable, and — since people reuse passwords — this compromises their accounts on other services too.",
+          "fixGuidanceTemplate": "Hash passwords with a purpose-built slow hash (bcrypt, scrypt, or Argon2) with a per-user salt, and never log or transmit the plaintext password after initial receipt.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "session-fixation",
+          "name": "Session Fixation",
+          "baseSeverity": "medium",
+          "whatItIs": "The session identifier is not regenerated when a user authenticates.",
+          "howItHurtsTemplate": "An attacker who plants a known session ID on a victim (e.g. via a crafted link) can hijack the victim's session the moment they log in.",
+          "fixGuidanceTemplate": "Issue a brand-new session ID immediately after successful authentication and invalidate the pre-login one.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "improper-password-reset",
+          "name": "Improper Password Reset",
+          "baseSeverity": "high",
+          "whatItIs": "The password-reset flow uses a guessable/non-expiring token, doesn't verify email ownership, or leaks whether an account exists.",
+          "howItHurtsTemplate": "An attacker can take over any account by forging or brute-forcing the reset token, or can enumerate valid accounts for further attacks.",
+          "fixGuidanceTemplate": "Use a single-use, short-lived, cryptographically random reset token sent only to the verified email/phone on file, and respond identically whether or not the account exists.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "broken-logout",
+          "name": "Broken Logout",
+          "baseSeverity": "medium",
+          "whatItIs": "Logging out only clears client-side state; the session/token remains valid server-side.",
+          "howItHurtsTemplate": "A token stolen before logout (e.g. via XSS, a shared device, or a proxy log) remains usable indefinitely even after the user believes they've logged out.",
+          "fixGuidanceTemplate": "Invalidate the session/token server-side on logout (revoke it or remove it from the active-session store), not just on the client.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "insecure-token-storage",
+          "name": "Insecure Token Storage",
+          "baseSeverity": "high",
+          "whatItIs": "Auth tokens are stored in `localStorage`/`sessionStorage` (readable by any script on the page) instead of an `httpOnly` cookie.",
+          "howItHurtsTemplate": "Any XSS vulnerability elsewhere in the app becomes a full account-takeover primitive, since injected script can simply read the token out of storage.",
+          "fixGuidanceTemplate": "Store session tokens in `httpOnly`, `Secure`, `SameSite` cookies rather than JS-accessible storage.",
+          "requiresDynamicTest": false
+        }
+      ]
+    },
+    {
+      "id": "authz-access",
+      "order": 3,
+      "title": "Authorization & Access Control",
+      "description": "Whether authenticated users can only reach the data and actions they're supposed to.",
+      "entries": [
+        {
+          "id": "missing-auth-check",
+          "name": "Insecure / Missing Access Control",
+          "baseSeverity": "high",
+          "whatItIs": "An endpoint that should require authentication or a specific role performs no such check at all.",
+          "howItHurtsTemplate": "Anyone — including an unauthenticated attacker — can call the endpoint directly and perform actions or read data that should have been gated.",
+          "fixGuidanceTemplate": "Add an explicit authentication/authorization check at the start of the handler (or centrally via middleware) and deny by default.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "idor",
+          "name": "Insecure Direct Object References (IDOR)",
+          "baseSeverity": "high",
+          "whatItIs": "An endpoint fetches a resource by an ID supplied by the client without checking that the current user actually owns/can access it.",
+          "howItHurtsTemplate": "Simply changing the ID in the request (e.g. `/orders/1002` → `/orders/1003`) lets an attacker read or modify another user's data.",
+          "fixGuidanceTemplate": "On every object-by-ID lookup, verify the object belongs to (or is otherwise accessible by) the authenticated user before returning or mutating it.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "missing-rls",
+          "name": "Missing / Misconfigured Row-Level Security",
+          "baseSeverity": "critical",
+          "whatItIs": "Database rows aren't scoped to the requesting user — either RLS policies are absent, or a policy is misconfigured (e.g. `USING (true)`).",
+          "howItHurtsTemplate": "Any authenticated (sometimes even anonymous) client can read or write every row in the table directly through the database API, bypassing application-layer checks entirely.",
+          "fixGuidanceTemplate": "Enable row-level security on every table containing user data and write policies that scope `SELECT`/`INSERT`/`UPDATE`/`DELETE` to the owning user (e.g. `auth.uid() = user_id`).",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "mass-assignment",
+          "name": "Mass Assignment",
+          "baseSeverity": "medium",
+          "whatItIs": "A create/update handler blindly assigns every field from the request body onto the model, including fields the client shouldn't control.",
+          "howItHurtsTemplate": "An attacker can set privileged fields not exposed in the UI — like `role: \"admin\"` or `isVerified: true` — simply by adding them to the request body.",
+          "fixGuidanceTemplate": "Explicitly allowlist which fields a request is permitted to set, rather than assigning the entire body onto the model.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "function-level-authz",
+          "name": "Function-Level Authorization Failure",
+          "baseSeverity": "high",
+          "whatItIs": "A privileged action (admin panel, bulk export, user management) checks that the user is logged in but not that they hold the required role.",
+          "howItHurtsTemplate": "Any regular authenticated user can call an admin-only function directly (often just by knowing or guessing the URL) and perform privileged actions.",
+          "fixGuidanceTemplate": "Check the specific role/permission required for the action, not just authentication status, ideally via a centralized authorization layer applied consistently.",
+          "requiresDynamicTest": false
+        }
+      ]
+    },
+    {
+      "id": "api-network",
+      "order": 4,
+      "title": "API & Network Security",
+      "description": "How the app's network surface and API contracts can be abused.",
+      "entries": [
+        {
+          "id": "cors-misconfig",
+          "name": "CORS Misconfiguration",
+          "baseSeverity": "medium",
+          "whatItIs": "The API reflects any `Origin` header back in `Access-Control-Allow-Origin`, often combined with `Access-Control-Allow-Credentials: true`.",
+          "howItHurtsTemplate": "A malicious website visited by a logged-in user can make authenticated cross-origin requests to the API and read the response, exfiltrating their data.",
+          "fixGuidanceTemplate": "Allow only an explicit, known list of trusted origins; never reflect an arbitrary `Origin` header, especially alongside credentialed requests.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "api-data-leakage",
+          "name": "API Data Leakage",
+          "baseSeverity": "medium",
+          "whatItIs": "An API response includes internal fields (password hashes, internal IDs, other users' data) beyond what the client actually needs.",
+          "howItHurtsTemplate": "Sensitive fields sitting unused in a JSON response are still fully visible to anyone inspecting network traffic, and often get logged or cached downstream.",
+          "fixGuidanceTemplate": "Explicitly serialize only the fields the client needs (a response DTO/serializer allowlist) instead of returning the full internal model.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "http-method-tampering",
+          "name": "HTTP Method Tampering",
+          "baseSeverity": "medium",
+          "whatItIs": "A route handler doesn't restrict which HTTP methods it accepts, or an override header (`X-HTTP-Method-Override`) is trusted.",
+          "howItHurtsTemplate": "An attacker can invoke state-changing logic through an unexpected method (e.g. `GET` instead of `POST`) that bypasses CSRF protections or logging tied to the expected method.",
+          "fixGuidanceTemplate": "Explicitly restrict each route to its intended HTTP method(s) and reject method-override headers unless deliberately supported and validated.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "rate-limiting",
+          "name": "Lack of Rate Limiting",
+          "baseSeverity": "medium",
+          "whatItIs": "Sensitive or expensive endpoints (login, search, export, LLM calls) have no request-rate ceiling.",
+          "howItHurtsTemplate": "Attackers can hammer the endpoint for brute-forcing, scraping, or running up your infrastructure/API costs with no friction.",
+          "fixGuidanceTemplate": "Add rate limiting (per-IP and/or per-account) at the reverse proxy or middleware layer, tuned to the endpoint's sensitivity.",
+          "requiresDynamicTest": true
+        },
+        {
+          "id": "open-redirect",
+          "name": "Open Redirect",
+          "baseSeverity": "low",
+          "whatItIs": "A redirect target is taken directly from a query parameter without validating it points somewhere within the app.",
+          "howItHurtsTemplate": "Attackers craft links that appear to point at your trusted domain but redirect victims to a phishing site, exploiting user trust in the original link.",
+          "fixGuidanceTemplate": "Validate the redirect target against an allowlist of known internal paths/domains, or use indirect reference tokens instead of raw URLs.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "subdomain-takeover",
+          "name": "Subdomain Takeover",
+          "baseSeverity": "high",
+          "whatItIs": "A DNS record (CNAME) points to a third-party service (hosting, CDN, SaaS) that no longer has a claimed resource at that address.",
+          "howItHurtsTemplate": "An attacker can claim the abandoned resource on the third-party service and serve arbitrary content — including phishing pages or stolen session cookies — from your trusted subdomain.",
+          "fixGuidanceTemplate": "Remove DNS records for any decommissioned third-party resource immediately, and periodically audit DNS records against active services.",
+          "requiresDynamicTest": true
+        },
+        {
+          "id": "open-ports",
+          "name": "Unnecessary Open Ports / Services",
+          "baseSeverity": "medium",
+          "whatItIs": "Infrastructure/config files expose debug ports, admin interfaces, or database ports beyond what's needed (e.g. `0.0.0.0` binds, debug servers left enabled).",
+          "howItHurtsTemplate": "Each unnecessarily exposed port/service is an additional entry point attackers can probe, often with weaker protections than the main application.",
+          "fixGuidanceTemplate": "Bind internal services to localhost/private networks only, disable debug endpoints in production configs, and expose only the minimum ports required.",
+          "requiresDynamicTest": true
+        },
+        {
+          "id": "unencrypted-transit",
+          "name": "Unencrypted Data in Transit",
+          "baseSeverity": "high",
+          "whatItIs": "The app or its configuration allows plain HTTP, or an internal service-to-service call is made without TLS.",
+          "howItHurtsTemplate": "Anyone on the network path (public wifi, a compromised router, a cloud-internal network) can read or tamper with traffic, including credentials and session tokens.",
+          "fixGuidanceTemplate": "Enforce HTTPS/TLS everywhere — redirect HTTP to HTTPS, set `Strict-Transport-Security`, and use TLS for internal service calls handling sensitive data.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "unrestricted-cross-domain",
+          "name": "Unrestricted Cross-Domain Communication",
+          "baseSeverity": "medium",
+          "whatItIs": "`postMessage`/cross-document communication handlers accept messages from any origin (`*` or no origin check).",
+          "howItHurtsTemplate": "A malicious page can send forged messages to the app, tricking it into leaking data or performing actions as if they came from a trusted embedded frame.",
+          "fixGuidanceTemplate": "Explicitly check `event.origin` against an allowlist of trusted origins before acting on any received message.",
+          "requiresDynamicTest": false
+        }
+      ]
+    },
+    {
+      "id": "client-side",
+      "order": 5,
+      "title": "Client-Side & Web App Security",
+      "description": "Risks that play out inside the user's browser.",
+      "entries": [
+        {
+          "id": "xss-stored",
+          "name": "Stored XSS",
+          "baseSeverity": "critical",
+          "whatItIs": "User-submitted content is persisted and later rendered as raw HTML without escaping.",
+          "howItHurtsTemplate": "A single malicious submission (comment, profile field, filename) runs attacker JavaScript in every other visitor's browser who views it — session theft, defacement, or further attacks at scale.",
+          "fixGuidanceTemplate": "Escape all user content by default when rendering as HTML (most frameworks do this automatically — avoid `dangerouslySetInnerHTML`/`v-html`/raw template interpolation), and sanitize any HTML you do intentionally allow.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "xss-reflected",
+          "name": "Reflected XSS",
+          "baseSeverity": "high",
+          "whatItIs": "A query parameter or form value is echoed back into the page's HTML without escaping.",
+          "howItHurtsTemplate": "An attacker crafts a malicious link that, when clicked by a victim, runs JavaScript in their session — commonly used to steal cookies or tokens.",
+          "fixGuidanceTemplate": "Escape all reflected input at render time, and set a Content-Security-Policy as defense in depth.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "xss-dom",
+          "name": "DOM-Based XSS",
+          "baseSeverity": "high",
+          "whatItIs": "Client-side JavaScript writes attacker-influenced data (URL fragment, `document.referrer`) into the DOM via `innerHTML` or similar sinks.",
+          "howItHurtsTemplate": "The vulnerability never touches the server, so server-side filtering won't catch it — a crafted URL alone is enough to run arbitrary script in the victim's browser.",
+          "fixGuidanceTemplate": "Avoid writing untrusted data into `innerHTML`/`document.write`; use `textContent` or a sanitizer, and treat URL fragments/query strings as untrusted input.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "missing-csp",
+          "name": "Missing Content-Security-Policy",
+          "baseSeverity": "low",
+          "whatItIs": "No `Content-Security-Policy` header is set, so the browser enforces no restriction on what scripts/resources the page can load or run.",
+          "howItHurtsTemplate": "Without CSP, any XSS vulnerability elsewhere becomes maximally exploitable — there's no browser-level backstop limiting what injected script can do or where it can send data.",
+          "fixGuidanceTemplate": "Add a restrictive `Content-Security-Policy` header (start with `default-src 'self'` and tighten from there) appropriate to the app's actual resource origins.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "clickjacking",
+          "name": "Clickjacking",
+          "baseSeverity": "low",
+          "whatItIs": "The app doesn't send `X-Frame-Options`/`frame-ancestors`, so it can be embedded in an invisible iframe on an attacker's page.",
+          "howItHurtsTemplate": "An attacker overlays invisible UI elements over decoy content, tricking users into clicking real buttons (e.g. \"delete account\", \"transfer funds\") without realizing it.",
+          "fixGuidanceTemplate": "Set `X-Frame-Options: DENY` (or `frame-ancestors 'none'` in CSP) unless the app deliberately needs to be embedded, in which case restrict to specific trusted origins.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "exposed-client-keys",
+          "name": "Exposed Client-Side API Keys",
+          "baseSeverity": "high",
+          "whatItIs": "A server-only API key or secret (not a public/publishable key) is bundled into client-side JavaScript.",
+          "howItHurtsTemplate": "Anyone can extract the key from the browser bundle's source and use it directly against the third-party API, potentially running up costs or accessing data the key was never meant to expose to end users.",
+          "fixGuidanceTemplate": "Move any call requiring a secret key behind a server-side proxy endpoint; only ever ship keys explicitly designed to be public (publishable/anon keys) to the client.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "sensitive-state-exposure",
+          "name": "Sensitive State Exposure",
+          "baseSeverity": "medium",
+          "whatItIs": "Sensitive data (other users' info, internal flags, unreleased content) is included in client-side state (Redux store, page props, hydration data) even when not rendered in the UI.",
+          "howItHurtsTemplate": "Anyone can open devtools or view page source to read the full state object, exposing data that was never meant to leave the server regardless of what's visually displayed.",
+          "fixGuidanceTemplate": "Only send the client the exact fields the current view needs; treat client-side state as fully public and filter server-side before it's ever serialized to the page.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "client-side-authz-logic",
+          "name": "Client-Side Authorization Logic",
+          "baseSeverity": "high",
+          "whatItIs": "A permission check (e.g. hiding an admin button, disabling a delete action) is enforced only in the frontend, with no matching check on the server.",
+          "howItHurtsTemplate": "An attacker can bypass the check entirely by calling the underlying API directly (via devtools, curl, or a proxy) — the UI restriction was cosmetic, not a real security control.",
+          "fixGuidanceTemplate": "Treat every client-side permission check as a UX nicety only; enforce the actual authorization decision on the server for every request.",
+          "requiresDynamicTest": false
+        }
+      ]
+    },
+    {
+      "id": "secrets-config",
+      "order": 6,
+      "title": "Secrets & Configuration",
+      "description": "Credentials, keys, and settings that shouldn't be exposed or left at defaults.",
+      "entries": [
+        {
+          "id": "hardcoded-secrets",
+          "name": "Hardcoded Secrets",
+          "baseSeverity": "critical",
+          "whatItIs": "An API key, database password, or signing secret is committed directly in source code instead of loaded from configuration.",
+          "howItHurtsTemplate": "Anyone with read access to the repository — including through a leaked build artifact, a public fork, or git history — can extract and use the credential directly.",
+          "fixGuidanceTemplate": "Move the secret to an environment variable or secrets manager, rotate the exposed credential immediately, and scrub it from git history if it was committed.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "default-db-creds",
+          "name": "Default Database Credentials",
+          "baseSeverity": "critical",
+          "whatItIs": "A database or admin interface still uses its default/example username and password (e.g. `postgres`/`postgres`, `admin`/`admin`).",
+          "howItHurtsTemplate": "If the service is ever reachable — even briefly, or through a misconfiguration elsewhere — default credentials are the very first thing an attacker or scanner will try.",
+          "fixGuidanceTemplate": "Generate a strong unique password for every credential and store it via environment variable or secrets manager; never ship default credentials past local development.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "verbose-errors",
+          "name": "Verbose Error Disclosure",
+          "baseSeverity": "low",
+          "whatItIs": "Unhandled exceptions return raw stack traces, file paths, or internal error details in the HTTP response.",
+          "howItHurtsTemplate": "This reveals internal file structure, package versions, and logic to anyone who can trigger an error, materially helping an attacker plan further attacks.",
+          "fixGuidanceTemplate": "Return a generic error message to clients in production and log full details server-side only.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "missing-audit-logs",
+          "name": "Missing Audit Logs",
+          "baseSeverity": "low",
+          "whatItIs": "Sensitive actions (login, permission changes, data export/deletion) aren't recorded anywhere.",
+          "howItHurtsTemplate": "Without an audit trail, a breach or abuse of privileged access can go undetected indefinitely, and there's no way to reconstruct what happened afterward.",
+          "fixGuidanceTemplate": "Log security-relevant events (who, what, when) to an append-only store, and alert on anomalous patterns.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "weak-crypto",
+          "name": "Weak Cryptographic Primitives",
+          "baseSeverity": "high",
+          "whatItIs": "The app uses a broken/deprecated algorithm (MD5, SHA1, DES, ECB mode) or a non-cryptographic RNG for security-sensitive purposes.",
+          "howItHurtsTemplate": "Weak primitives can be reversed, collided, or predicted with modern tooling, undermining whatever protection (integrity, confidentiality, unpredictability) they were meant to provide.",
+          "fixGuidanceTemplate": "Use current, vetted primitives (AES-GCM for encryption, SHA-256+ for hashing where hashing alone is appropriate, a CSPRNG for anything security-sensitive) via a well-maintained crypto library.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "loose-infra-defaults",
+          "name": "Loose Infrastructure Defaults",
+          "baseSeverity": "medium",
+          "whatItIs": "Cloud/infra configuration (IAM policies, security groups, storage settings) is left at its permissive default rather than scoped to what the app needs.",
+          "howItHurtsTemplate": "Overly broad defaults (e.g. wildcard IAM permissions, world-open security groups) turn a single compromised component into access far beyond what it should ever need.",
+          "fixGuidanceTemplate": "Apply least-privilege to every credential and network rule — grant only the specific permissions and access the component actually requires.",
+          "requiresDynamicTest": false
+        }
+      ]
+    },
+    {
+      "id": "data-storage",
+      "order": 7,
+      "title": "Data & Storage",
+      "description": "How files, uploads, and stored data are protected.",
+      "entries": [
+        {
+          "id": "public-buckets",
+          "name": "Public Storage Buckets",
+          "baseSeverity": "critical",
+          "whatItIs": "A cloud storage bucket (S3, GCS, Supabase Storage) is configured as publicly listable and/or readable.",
+          "howItHurtsTemplate": "Anyone who finds or guesses the bucket name can list and download every file in it, including anything assumed to be private.",
+          "fixGuidanceTemplate": "Set the bucket to private by default and serve files through signed, time-limited URLs generated by your backend after an access check.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "unvalidated-uploads",
+          "name": "Unvalidated File Uploads",
+          "baseSeverity": "high",
+          "whatItIs": "An upload endpoint accepts files without validating type, size, or content, and/or stores them in a web-executable location.",
+          "howItHurtsTemplate": "An attacker can upload an executable script disguised as a normal file and, if it lands somewhere the server will execute it, gain code execution — or simply exhaust storage/bandwidth.",
+          "fixGuidanceTemplate": "Validate file type by content (not just extension), enforce a size limit, store uploads outside the web root or in object storage, and serve them with a non-executable content type.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "race-condition",
+          "name": "Race Condition",
+          "baseSeverity": "medium",
+          "whatItIs": "A check-then-act sequence (e.g. checking balance then deducting it) isn't atomic, allowing concurrent requests to interleave.",
+          "howItHurtsTemplate": "Firing the same request in parallel can bypass the intended limit — classic examples include redeeming a coupon multiple times or withdrawing more than the account balance.",
+          "fixGuidanceTemplate": "Make the check-and-act sequence atomic using a database transaction with appropriate locking, or an atomic increment/decrement operation, instead of separate read-then-write steps.",
+          "requiresDynamicTest": true
+        }
+      ]
+    },
+    {
+      "id": "dependency-supply-chain",
+      "order": 8,
+      "title": "Dependency & Supply Chain",
+      "description": "Risk introduced through third-party packages and boilerplate.",
+      "entries": [
+        {
+          "id": "vulnerable-deps",
+          "name": "Vulnerable Dependencies",
+          "baseSeverity": "medium",
+          "whatItIs": "An installed package has a publicly known vulnerability (CVE) in the version pinned by the project.",
+          "howItHurtsTemplate": "Attackers actively scan for apps running known-vulnerable package versions since public exploits or proof-of-concepts often already exist.",
+          "fixGuidanceTemplate": "Upgrade to a patched version of the dependency, or remove it if unused; add automated dependency-vulnerability scanning to CI going forward.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "hallucinated-deps",
+          "name": "Hallucinated Dependencies",
+          "baseSeverity": "high",
+          "whatItIs": "An import references a package name that doesn't exist on the real registry — often invented by an AI coding assistant.",
+          "howItHurtsTemplate": "Attackers monitor for exactly this pattern and pre-register these hallucinated package names with malicious code, so the next `npm install`/`pip install` silently pulls in an attacker-controlled package.",
+          "fixGuidanceTemplate": "Verify every dependency actually exists on the official registry and comes from a reputable maintainer before installing; remove or replace any that don't check out.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "typosquatting",
+          "name": "Typosquatting Imports",
+          "baseSeverity": "high",
+          "whatItIs": "An imported package name is a near-miss of a popular package (e.g. `reqeusts` instead of `requests`, `expresss` instead of `express`).",
+          "howItHurtsTemplate": "Typosquatted packages are frequently malicious, designed to run attacker code the moment they're installed by anyone who made or copied the same typo.",
+          "fixGuidanceTemplate": "Double-check the exact spelling and download stats/maintainer of every new dependency against the real, well-known package before installing.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "vulnerable-boilerplates",
+          "name": "Vulnerable Boilerplate Code",
+          "baseSeverity": "medium",
+          "whatItIs": "Starter/template code (auth scaffolding, example config) was copied in with insecure defaults never hardened for production (example secrets, permissive CORS, debug mode on).",
+          "howItHurtsTemplate": "Boilerplate insecure defaults are extremely well-known and are often the first thing automated scanners check for, since they're identical across every project that used the same template.",
+          "fixGuidanceTemplate": "Audit any scaffolded/generated code before shipping — replace example secrets, tighten default permissions, and disable debug/dev-mode flags for production.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "outdated-deps",
+          "name": "Outdated Dependencies",
+          "baseSeverity": "low",
+          "whatItIs": "Dependencies are significantly behind their current stable release, even without a known CVE yet.",
+          "howItHurtsTemplate": "Old versions accumulate undiscovered/unpatched issues over time and often fall out of the maintenance window, meaning a future vulnerability may never get a patch for the version in use.",
+          "fixGuidanceTemplate": "Establish a regular update cadence for dependencies rather than waiting for a CVE to force an upgrade.",
+          "requiresDynamicTest": false
+        }
+      ]
+    },
+    {
+      "id": "ai-llm-specific",
+      "order": 9,
+      "title": "AI / LLM-Specific",
+      "description": "Risks specific to apps that call a language model.",
+      "entries": [
+        {
+          "id": "prompt-injection",
+          "name": "Prompt Injection",
+          "baseSeverity": "high",
+          "whatItIs": "Untrusted content (user input, a fetched webpage, a document) is concatenated into the model's prompt with no separation from trusted instructions.",
+          "howItHurtsTemplate": "An attacker can embed instructions in that untrusted content that override the app's intended behavior, extracting system prompts, exfiltrating data, or making the model take unintended actions — especially dangerous if the model can call tools.",
+          "fixGuidanceTemplate": "Clearly delimit and label untrusted content in the prompt, apply the least privilege to any tools the model can invoke, and treat model output influenced by untrusted content as untrusted itself.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "insecure-output-handling",
+          "name": "Insecure Output Handling",
+          "baseSeverity": "high",
+          "whatItIs": "LLM output is rendered as HTML, executed as code, or used to build a query/command without validation, as if it were trusted app-generated data.",
+          "howItHurtsTemplate": "Since model output can be influenced by untrusted input (prompt injection) or simply hallucinate unsafe content, treating it as trusted turns any of these XSS/injection classes into an LLM-driven attack path.",
+          "fixGuidanceTemplate": "Treat LLM output exactly like user input: escape it before rendering as HTML, validate it before using in a query/command, and never `eval` it.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "training-data-leakage",
+          "name": "Training Data / Context Leakage",
+          "baseSeverity": "medium",
+          "whatItIs": "Sensitive data (other users' records, internal documents, secrets) is included in the model's context/prompt without restriction on what the model may repeat back.",
+          "howItHurtsTemplate": "A user can often extract data from the context that wasn't meant for them simply by asking the model to repeat, summarize, or translate its instructions/context.",
+          "fixGuidanceTemplate": "Only include the minimum context the current user is authorized to see, and treat anything placed in the prompt as potentially disclosable to that user.",
+          "requiresDynamicTest": false
+        },
+        {
+          "id": "over-reliance-poisoning",
+          "name": "Over-Reliance & Poisoning Risk",
+          "baseSeverity": "medium",
+          "whatItIs": "The app acts on LLM output (decisions, generated code, generated queries) without any validation or human review layer, and/or ingests untrusted content into a fine-tuning or RAG data source.",
+          "howItHurtsTemplate": "A confidently wrong or maliciously poisoned model response gets executed as if it were verified, and a poisoned data source can systematically bias every future response derived from it.",
+          "fixGuidanceTemplate": "Add a validation/guardrail layer between model output and any consequential action, and vet any data source that feeds fine-tuning or retrieval before trusting it.",
+          "requiresDynamicTest": false
+        }
+      ]
+    }
+  ]
+}
