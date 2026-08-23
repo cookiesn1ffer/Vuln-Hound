@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::findings::{Finding, SubmitFindingsArgs};
 use crate::llm::client::OpenAiCompatClient;
-use crate::llm::types::ChatMessage;
+use crate::llm::types::{ChatMessage, ToolCall, ToolCallFunction};
 use crate::playbook::PlaybookGroup;
 use crate::security::mode::ScanMode;
 
@@ -51,6 +51,31 @@ fn trim_old_tool_results(messages: &mut [ChatMessage]) {
             messages[i].content = Some(TRIMMED_PLACEHOLDER.to_string());
         }
     }
+}
+
+/// Recovers `(name, arguments_json)` from assistant text when a provider
+/// wrote the intended tool call as plain JSON instead of using the
+/// structured `tool_calls` field — e.g. `{"name": "search_text",
+/// "parameters": {"pattern": "..."}}` somewhere in a longer message. Accepts
+/// either `parameters` or `arguments` as the args key, and either an object
+/// or an already-JSON-encoded string for its value. Returns `None` (falling
+/// through to the normal "no tool call" handling) if nothing JSON-shaped
+/// with a `name` field is found.
+fn extract_fallback_tool_call(text: &str) -> Option<(String, String)> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end < start {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(&text[start..=end]).ok()?;
+
+    let name = value.get("name").and_then(|v| v.as_str())?.to_string();
+    let args_value = value.get("parameters").or_else(|| value.get("arguments"))?;
+    let arguments = match args_value {
+        serde_json::Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).ok()?,
+    };
+    Some((name, arguments))
 }
 
 /// Drives one scan session against a real (or test) LLM client. Emission is
@@ -119,7 +144,38 @@ pub async fn run_scan_session(
         let assistant_msg = choice.message;
         messages.push(assistant_msg.clone());
 
-        let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
+        let mut tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
+
+        // Some providers never populate the structured tool_calls field at all
+        // for certain models — observed live: Ollama with an otherwise-capable
+        // model instead echoes the intended call as JSON text in `content`
+        // (e.g. `{"name": "search_text", "parameters": {"pattern": "..."}}`),
+        // every single iteration. Without recovering it, the session can never
+        // make real progress: it silently burns the whole iteration budget on
+        // the same dead-end nudge and ends as "scanned" with zero findings,
+        // which looks in the UI exactly like a clean scan rather than a
+        // provider-side tool-calling failure.
+        if tool_calls.is_empty() {
+            if let Some((name, arguments)) = assistant_msg
+                .content
+                .as_deref()
+                .and_then(extract_fallback_tool_call)
+            {
+                emit(ScanEvent::Log {
+                    session_id: session_id.clone(),
+                    group_id: group_id.clone(),
+                    message: format!(
+                        "(recovered tool call from text — this provider/model didn't use structured tool calling) {name}({arguments})"
+                    ),
+                });
+                tool_calls.push(ToolCall {
+                    id: format!("fallback-{iteration}"),
+                    kind: "function".into(),
+                    function: ToolCallFunction { name, arguments },
+                });
+            }
+        }
+
         if tool_calls.is_empty() {
             if let Some(text) = assistant_msg
                 .content
@@ -221,4 +277,42 @@ pub async fn run_scan_session(
         group_id,
         status: final_status.into(),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_fallback_tool_call_parses_parameters_key() {
+        // The exact text observed live from Ollama (huihui_ai/dolphin3-abliterated:8b),
+        // which never populated the structured tool_calls field for this model.
+        let text = "I will continue investigating by calling a tool. Here is the JSON for \
+                     the function call with its proper arguments that best answers the given \
+                     prompt:\n\n{\"name\": \"search_text\", \"parameters\": {\"pattern\": \"eval\\\\(.*\\\\)\"}}";
+        let (name, arguments) = extract_fallback_tool_call(text).unwrap();
+        assert_eq!(name, "search_text");
+        let parsed: serde_json::Value = serde_json::from_str(&arguments).unwrap();
+        assert_eq!(parsed["pattern"], "eval\\(.*\\)");
+    }
+
+    #[test]
+    fn extract_fallback_tool_call_accepts_arguments_key() {
+        let text = "{\"name\": \"read_file\", \"arguments\": {\"path\": \"server.js\"}}";
+        let (name, arguments) = extract_fallback_tool_call(text).unwrap();
+        assert_eq!(name, "read_file");
+        assert_eq!(arguments, "{\"path\":\"server.js\"}");
+    }
+
+    #[test]
+    fn extract_fallback_tool_call_returns_none_for_plain_prose() {
+        let text = "I've reviewed the files and found no injection issues so far.";
+        assert!(extract_fallback_tool_call(text).is_none());
+    }
+
+    #[test]
+    fn extract_fallback_tool_call_returns_none_without_name_field() {
+        let text = "{\"tool\": \"search_text\", \"parameters\": {\"pattern\": \"eval\"}}";
+        assert!(extract_fallback_tool_call(text).is_none());
+    }
 }

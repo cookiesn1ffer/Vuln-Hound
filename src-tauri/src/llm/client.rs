@@ -10,6 +10,16 @@ use super::types::{ChatCompletionRequest, ChatCompletionResponse, ChatMessage, T
 /// can occasionally hang far longer than any reasonable UI should wait).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// Caps how many tokens a single response may generate. Nothing in this
+/// app's tool-calling flow ever legitimately needs more than a short
+/// tool-call JSON blob plus a brief reasoning preamble — observed live: a
+/// weak local model without this cap rambled to 2000+ tokens (at ~12 tok/s
+/// on this hardware) without ever concluding, and got cut off mid-generation
+/// by REQUEST_TIMEOUT instead. Bounding response length directly fixes the
+/// actual problem instead of just widening the timeout to let it ramble
+/// longer.
+const MAX_RESPONSE_TOKENS: u32 = 1024;
+
 #[derive(Debug, Error)]
 pub enum LlmError {
     #[error("request failed: {0}")]
@@ -18,6 +28,11 @@ pub enum LlmError {
     ProviderError { status: u16, body: String },
     #[error("provider returned no choices")]
     EmptyResponse,
+    /// Distinct from a transient rate limit: a daily quota doesn't refill on
+    /// any timescale a retry loop should ever wait for, so this is reported
+    /// as an immediate hard failure instead of being retried.
+    #[error("{0}")]
+    DailyQuotaExceeded(String),
 }
 
 pub struct OpenAiCompatClient {
@@ -68,7 +83,7 @@ impl OpenAiCompatClient {
             model: self.model.clone(),
             messages,
             tools,
-            max_tokens: None,
+            max_tokens: Some(MAX_RESPONSE_TOKENS),
             temperature: Some(temperature),
         };
 
@@ -102,19 +117,32 @@ impl OpenAiCompatClient {
             let resp = req.send().await?;
             let status = resp.status();
 
-            if status.as_u16() == 429 && attempt < MAX_RETRIES {
+            if status.as_u16() == 429 {
                 let header_wait = retry_after_header(&resp);
-                let suggested = match header_wait {
-                    Some(w) => w,
-                    None => {
-                        let text = resp.text().await.unwrap_or_default();
-                        retry_after_from_body(&text).unwrap_or(Duration::from_millis(2500))
-                    }
-                };
-                let wait = suggested.max(BACKOFF_FLOORS[attempt as usize]);
-                attempt += 1;
-                tokio::time::sleep(wait).await;
-                continue;
+                let text = resp.text().await.unwrap_or_default();
+
+                // Observed live: a daily-quota (TPD) 429 retried with the usual
+                // short backoff just burns retries and an iteration hitting the
+                // same 429 again — a TPD cap doesn't refill within any window a
+                // retry loop should wait for, unlike a per-minute (TPM) cap.
+                if is_daily_quota_exceeded(&text) {
+                    return Err(LlmError::DailyQuotaExceeded(extract_error_message(&text)));
+                }
+
+                if attempt < MAX_RETRIES {
+                    let suggested = header_wait
+                        .or_else(|| retry_after_from_body(&text))
+                        .unwrap_or(Duration::from_millis(2500));
+                    let wait = suggested.max(BACKOFF_FLOORS[attempt as usize]);
+                    attempt += 1;
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+
+                return Err(LlmError::ProviderError {
+                    status: 429,
+                    body: text,
+                });
             }
 
             if !status.is_success() {
@@ -143,21 +171,65 @@ fn retry_after_header(resp: &reqwest::Response) -> Option<Duration> {
 }
 
 /// Some providers (observed: Groq) only communicate the suggested wait inside
-/// the JSON error body's message text (e.g. "...try again in 2.7225s..."),
+/// the JSON error body's message text — either plain seconds ("...try again
+/// in 2.7225s...") or minutes+seconds ("...try again in 19m59.232s...") —
 /// not a header. Best-effort scrape rather than a hard requirement — falls
-/// back to a short fixed wait if the format doesn't match.
+/// back to `None` if the format doesn't match.
 fn retry_after_from_body(body: &str) -> Option<Duration> {
     let idx = body.find("try again in")?;
-    let rest = &body[idx + "try again in".len()..];
-    let numeric: String = rest
-        .trim_start()
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    let seconds: f64 = numeric.parse().ok()?;
+    let rest = body[idx + "try again in".len()..].trim_start();
+
+    // Capture the duration token (digits/'.'/'m', ending at the first 's') so
+    // a trailing sentence period right after it (".") isn't swept in too.
+    let mut end = 0;
+    let mut seen_seconds_unit = false;
+    for (i, c) in rest.char_indices() {
+        if seen_seconds_unit {
+            break;
+        }
+        if c.is_ascii_digit() || c == '.' || c == 'm' {
+            end = i + c.len_utf8();
+        } else if c == 's' {
+            end = i + c.len_utf8();
+            seen_seconds_unit = true;
+        } else {
+            break;
+        }
+    }
+    let token = &rest[..end];
+
+    let seconds: f64 = if let Some((min_part, sec_part)) = token.split_once('m') {
+        let minutes: f64 = min_part.parse().ok()?;
+        let sec_part = sec_part.strip_suffix('s')?;
+        let secs: f64 = if sec_part.is_empty() {
+            0.0
+        } else {
+            sec_part.parse().ok()?
+        };
+        minutes * 60.0 + secs
+    } else {
+        token.strip_suffix('s')?.parse().ok()?
+    };
+
     Some(Duration::from_millis(
         ((seconds * 1000.0) as u64).clamp(250, 30_000),
     ))
+}
+
+/// Groq's tokens-per-day message includes "(TPD)"/"tokens per day"; distinct
+/// from a tokens-per-minute (TPM) message, which is worth a short retry.
+fn is_daily_quota_exceeded(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("tpd") || lower.contains("tokens per day")
+}
+
+/// Providers wrap their error text in `{"error":{"message": "..."}}`; surface
+/// just that human-readable sentence when present instead of the raw JSON.
+fn extract_error_message(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error")?.get("message")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| body.to_string())
 }
 
 /// A listing endpoint should respond quickly or not at all — no reason to make
@@ -207,4 +279,60 @@ struct ModelsListResponse {
 #[derive(serde::Deserialize)]
 struct ModelListEntry {
     id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_after_from_body_parses_plain_seconds() {
+        let body = r#"{"error":{"message":"try again in 2.7225s.","type":"tokens"}}"#;
+        assert_eq!(
+            retry_after_from_body(body),
+            Some(Duration::from_millis(2722))
+        );
+    }
+
+    #[test]
+    fn retry_after_from_body_parses_minutes_and_seconds() {
+        // The exact format that triggered a live bug: this used to parse as
+        // "19" seconds (truncated at the 'm') instead of ~1199 seconds.
+        let body = r#"{"error":{"message":"Please try again in 19m59.232s. Need more tokens?"}}"#;
+        let parsed = retry_after_from_body(body).unwrap();
+        // Clamped to the 30s ceiling — real value (~1199s) is far above it,
+        // but the parse itself must land in the right ballpark pre-clamp.
+        assert_eq!(parsed, Duration::from_millis(30_000));
+    }
+
+    #[test]
+    fn retry_after_from_body_missing_phrase_returns_none() {
+        let body = r#"{"error":{"message":"rate limited"}}"#;
+        assert_eq!(retry_after_from_body(body), None);
+    }
+
+    #[test]
+    fn is_daily_quota_exceeded_detects_tpd() {
+        let body =
+            r#"{"error":{"message":"...on tokens per day (TPD): Limit 200000, Used 197747..."}}"#;
+        assert!(is_daily_quota_exceeded(body));
+    }
+
+    #[test]
+    fn is_daily_quota_exceeded_ignores_per_minute_limits() {
+        let body = r#"{"error":{"message":"Rate limit reached on tokens per minute (TPM)"}}"#;
+        assert!(!is_daily_quota_exceeded(body));
+    }
+
+    #[test]
+    fn extract_error_message_pulls_message_field() {
+        let body = r#"{"error":{"message":"quota exceeded","type":"tokens"}}"#;
+        assert_eq!(extract_error_message(body), "quota exceeded");
+    }
+
+    #[test]
+    fn extract_error_message_falls_back_to_raw_body() {
+        let body = "not json";
+        assert_eq!(extract_error_message(body), "not json");
+    }
 }
