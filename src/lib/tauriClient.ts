@@ -38,6 +38,10 @@ export async function testProviderConnection(): Promise<string> {
   return invoke<string>("test_provider_connection");
 }
 
+export async function fetchModels(providerId: string, baseUrl: string): Promise<string[]> {
+  return invoke<string[]>("fetch_models", { providerId, baseUrl });
+}
+
 export async function startScanSession(
   targetDir: string,
   mode: ScanMode,

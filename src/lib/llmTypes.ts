@@ -1,9 +1,9 @@
 export interface ProviderPreset {
   id: string;
   label: string;
+  family: string | null;
   baseUrl: string;
   requiresKey: boolean;
-  defaultModel: string | null;
 }
 
 export interface Settings {

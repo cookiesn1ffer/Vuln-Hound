@@ -1,4 +1,5 @@
-import { ShieldQuestion } from "lucide-react";
+import { AlertCircle, ShieldQuestion } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useScanStore } from "@/state/scanStore";
 import { sortBySeverityAsc } from "@/lib/severity";
 import { FindingRow } from "./FindingRow";
@@ -9,10 +10,12 @@ export function FindingList() {
   const findings = useScanStore((s) => s.findings);
   const selectedFindingId = useScanStore((s) => s.selectedFindingId);
   const selectFinding = useScanStore((s) => s.selectFinding);
+  const runGroupScan = useScanStore((s) => s.runGroupScan);
   const groupState = useScanStore((s) =>
     selectedGroupId ? s.groupStates[selectedGroupId] : undefined
   );
   const activity = useScanStore((s) => (selectedGroupId ? s.groupActivity[selectedGroupId] : undefined));
+  const error = useScanStore((s) => (selectedGroupId ? s.groupErrors[selectedGroupId] : undefined));
 
   const group = playbook.groups.find((g) => g.id === selectedGroupId);
 
@@ -52,6 +55,17 @@ export function FindingList() {
         {groupState?.status === "scanned" && groupFindings.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center text-muted-foreground">
             <p className="text-sm">No issues found in this category.</p>
+          </div>
+        )}
+
+        {groupState?.status === "error" && (
+          <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+            <AlertCircle className="size-6 text-severity-critical" />
+            <p className="text-sm text-foreground">The scan failed before finishing.</p>
+            {error && <p className="max-w-md text-xs text-muted-foreground break-words">{error}</p>}
+            <Button size="sm" variant="outline" onClick={() => selectedGroupId && runGroupScan(selectedGroupId)}>
+              Retry
+            </Button>
           </div>
         )}
 

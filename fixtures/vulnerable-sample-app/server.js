@@ -1,9 +1,16 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
 const db = require("./db");
+const { corsMiddleware, errorHandler } = require("./config");
 
 const app = express();
 app.use(express.json());
+app.use(corsMiddleware);
+
+// Files are accepted with no type/size validation and stored directly under
+// the web root, so an uploaded script would be served back as executable.
+const upload = multer({ dest: "./public/uploads" });
 
 // Hardcoded secret — should be an env var.
 const stripe = require("stripe")("sk_live_51H3xampleSecretKeyDoNotUse00000000");
@@ -45,5 +52,33 @@ app.get("/api/orders/:id", (req, res) => {
     res.json(rows[0]);
   });
 });
+
+// Mass assignment: the entire request body is written onto the user record,
+// so a client can set fields like `role` or `isVerified` that were never
+// meant to be user-controlled.
+app.put("/api/profile", (req, res) => {
+  db.query("UPDATE users SET ? WHERE id = " + req.body.id, req.body, (err) => {
+    res.json({ ok: true });
+  });
+});
+
+// Function-level authorization failure: checks that a token exists at all,
+// but never checks that the caller is actually an admin.
+app.post("/api/admin/delete-user", (req, res) => {
+  jwt.verify(req.headers.authorization, "secret123", (err, decoded) => {
+    if (err) return res.status(401).json({ error: "unauthorized" });
+    db.query("DELETE FROM users WHERE id = " + req.body.userId, () => {
+      res.json({ ok: true });
+    });
+  });
+});
+
+// Unvalidated file upload: no type/size/content check, saved into the
+// public web root under the attacker-chosen original filename.
+app.post("/api/upload", upload.single("file"), (req, res) => {
+  res.json({ path: "/uploads/" + req.file.originalname });
+});
+
+app.use(errorHandler);
 
 app.listen(3000);

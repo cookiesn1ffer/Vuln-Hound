@@ -1,5 +1,12 @@
-import { useEffect, useState } from "react";
-import { CheckCircle2, Key, Loader2, Settings as SettingsIcon, XCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  CheckCircle2,
+  Key,
+  Loader2,
+  RefreshCw,
+  Settings as SettingsIcon,
+  XCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,11 +22,14 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { useSettingsStore } from "@/state/settingsStore";
+import type { ProviderPreset } from "@/lib/llmTypes";
 
 export function SettingsDialog() {
   const [open, setOpen] = useState(false);
@@ -37,6 +47,10 @@ export function SettingsDialog() {
   const testing = useSettingsStore((s) => s.testing);
   const testResult = useSettingsStore((s) => s.testResult);
   const testConnection = useSettingsStore((s) => s.testConnection);
+  const models = useSettingsStore((s) => s.models);
+  const modelsLoading = useSettingsStore((s) => s.modelsLoading);
+  const modelsError = useSettingsStore((s) => s.modelsError);
+  const refreshModels = useSettingsStore((s) => s.refreshModels);
 
   useEffect(() => {
     if (open && !loaded) load();
@@ -44,6 +58,21 @@ export function SettingsDialog() {
 
   const preset = presets.find((p) => p.id === settings.providerId);
   const hasKey = apiKeyStatus[settings.providerId] ?? false;
+
+  const { grouped, standalone } = useMemo(() => {
+    const grouped = new Map<string, ProviderPreset[]>();
+    const standalone: ProviderPreset[] = [];
+    for (const p of presets) {
+      if (p.family) {
+        const list = grouped.get(p.family) ?? [];
+        list.push(p);
+        grouped.set(p.family, list);
+      } else {
+        standalone.push(p);
+      }
+    }
+    return { grouped, standalone };
+  }, [presets]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -79,10 +108,20 @@ export function SettingsDialog() {
                   <SelectValue placeholder="Choose a provider" />
                 </SelectTrigger>
                 <SelectContent>
-                  {presets.map((p) => (
+                  {standalone.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       {p.label}
                     </SelectItem>
+                  ))}
+                  {Array.from(grouped.entries()).map(([family, items]) => (
+                    <SelectGroup key={family}>
+                      <SelectLabel>{family}</SelectLabel>
+                      {items.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
@@ -93,19 +132,62 @@ export function SettingsDialog() {
               <Input
                 value={settings.baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
+                onBlur={() => refreshModels()}
                 className="font-mono text-xs"
                 placeholder="http://localhost:1234/v1"
               />
             </div>
 
             <div>
-              <Label className="mb-1.5 text-xs text-muted-foreground">Model</Label>
-              <Input
-                value={settings.model}
-                onChange={(e) => setModel(e.target.value)}
-                className="font-mono text-xs"
-                placeholder="model name"
-              />
+              <Label className="mb-1.5 flex items-center text-xs text-muted-foreground">
+                Model
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="ml-auto"
+                  onClick={() => refreshModels()}
+                  disabled={modelsLoading}
+                  aria-label="Refresh model list"
+                >
+                  <RefreshCw className={modelsLoading ? "size-3 animate-spin" : "size-3"} />
+                </Button>
+              </Label>
+
+              {models.length > 0 ? (
+                <Select value={settings.model} onValueChange={(v) => v && setModel(v)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Choose a model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  value={settings.model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className="font-mono text-xs"
+                  placeholder={modelsLoading ? "Loading models…" : "model name"}
+                  disabled={modelsLoading}
+                />
+              )}
+
+              {modelsError && (
+                <p className="mt-1.5 text-[11px] text-severity-critical">
+                  Couldn't list models: {modelsError}
+                </p>
+              )}
+              {!modelsError && models.length === 0 && !modelsLoading && (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {preset?.requiresKey && !hasKey
+                    ? "Save an API key below, then refresh to see available models."
+                    : "No models found — type one manually, or refresh once the server is reachable."}
+                </p>
+              )}
             </div>
 
             {preset?.requiresKey && (

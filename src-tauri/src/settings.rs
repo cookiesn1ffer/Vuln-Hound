@@ -18,11 +18,13 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         // LM Studio is the default: works fully offline with no API key to set up.
+        // No model is preselected — the UI fetches the provider's real model list
+        // live and the user picks one (see fetch_provider_models).
         let preset = find_preset("lmstudio").expect("lmstudio preset must exist");
         Self {
             provider_id: preset.id.to_string(),
             base_url: preset.base_url.to_string(),
-            model: preset.default_model.unwrap_or("local-model").to_string(),
+            model: String::new(),
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::llm::client::OpenAiCompatClient;
+use crate::llm::client::{fetch_provider_models, OpenAiCompatClient};
 use crate::llm::providers::{ProviderPreset, PROVIDER_PRESETS};
 use crate::llm::types::ChatMessage;
 use crate::secrets;
@@ -32,6 +32,19 @@ pub fn get_api_key_status(provider_id: String) -> bool {
 #[tauri::command]
 pub fn delete_api_key(provider_id: String) -> Result<(), String> {
     secrets::delete_api_key(&provider_id)
+}
+
+/// Fetches the live model list for a provider directly from its `/models`
+/// endpoint — never from a hardcoded list. `base_url` is passed explicitly
+/// (rather than re-reading settings) so the UI can list models for whatever
+/// base URL is currently in the form, including an unsaved edit to a custom
+/// endpoint.
+#[tauri::command]
+pub async fn fetch_models(provider_id: String, base_url: String) -> Result<Vec<String>, String> {
+    let api_key = secrets::get_api_key(&provider_id).ok();
+    fetch_provider_models(&base_url, api_key.as_deref())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

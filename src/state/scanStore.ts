@@ -17,6 +17,7 @@ interface ScanState {
   playbookError: string | null;
   groupStates: Record<string, GroupRunState>;
   groupActivity: Record<string, string>;
+  groupErrors: Record<string, string>;
   findings: Finding[];
   selectedGroupId: string | null;
   selectedFindingId: string | null;
@@ -40,6 +41,7 @@ export const useScanStore = create<ScanState>((set, get) => ({
   playbookError: null,
   groupStates: {},
   groupActivity: {},
+  groupErrors: {},
   findings: [],
   selectedGroupId: null,
   selectedFindingId: null,
@@ -81,19 +83,22 @@ export const useScanStore = create<ScanState>((set, get) => ({
         [groupId]: { groupId, status: "scanning", counts: { ...ZERO_COUNTS } },
       },
       groupActivity: { ...s.groupActivity, [groupId]: "Starting…" },
+      groupErrors: { ...s.groupErrors, [groupId]: "" },
       findings: s.findings.filter((f) => f.groupId !== groupId),
     }));
 
     try {
       await startScanSession(targetDir, mode, groupId);
     } catch (err) {
+      const message = String(err);
       set((s) => ({
         groupStates: {
           ...s.groupStates,
           [groupId]: { groupId, status: "error", counts: { ...ZERO_COUNTS } },
         },
+        groupErrors: { ...s.groupErrors, [groupId]: message },
       }));
-      toast.error(`Couldn't start scan: ${String(err)}`);
+      toast.error(`Couldn't start scan: ${message}`);
     }
   },
 
@@ -145,6 +150,7 @@ export const useScanStore = create<ScanState>((set, get) => ({
       }
 
       if (payload.type === "error") {
+        set((s) => ({ groupErrors: { ...s.groupErrors, [payload.groupId]: payload.message } }));
         toast.error(payload.message);
       }
     });

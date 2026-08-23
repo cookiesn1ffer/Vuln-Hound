@@ -32,7 +32,11 @@ const MANIFEST_FILENAMES: &[&str] = &[
     "build.gradle",
 ];
 
-const MAX_READ_BYTES: usize = 200_000;
+// Bounded well below what a single read_file call could otherwise spend on a
+// low free-tier token budget (e.g. Groq's 8000 TPM) — the accumulated
+// conversation history re-sends every prior tool result on each request, so a
+// couple of large file reads can exhaust a small per-minute budget outright.
+const MAX_READ_BYTES: usize = 20_000;
 
 /// Resolves `rel_path` against `root`, verifying the result stays inside `root`.
 /// This is the same defense-in-depth principle the app teaches for path traversal

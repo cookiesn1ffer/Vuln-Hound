@@ -23,6 +23,7 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::set_settings,
             commands::settings::get_provider_presets,
+            commands::settings::fetch_models,
             commands::settings::save_api_key,
             commands::settings::get_api_key_status,
             commands::settings::delete_api_key,

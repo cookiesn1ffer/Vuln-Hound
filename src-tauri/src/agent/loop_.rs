@@ -12,7 +12,46 @@ use super::events::ScanEvent;
 use super::prompt::build_scan_system_prompt;
 use super::tool_registry::{self, build_scan_tools};
 
-const MAX_ITERATIONS: u32 = 16;
+const MAX_ITERATIONS: u32 = 20;
+/// How many of the most recent tool results are kept at full size; anything
+/// older is collapsed to a placeholder. Without this, the full conversation
+/// (every prior tool result) is re-sent on every request, so token cost grows
+/// with each tool call — observed in practice: by call ~19 a single request
+/// needed more tokens than Groq's entire free-tier per-minute budget (8000),
+/// a request no amount of retrying can ever succeed at.
+const KEEP_RECENT_TOOL_RESULTS: usize = 6;
+const TRIMMED_PLACEHOLDER: &str =
+    "[older result trimmed to save context — call this tool again if you need it]";
+/// When this many iterations remain, stop suggesting further exploration and
+/// force a conclusion instead — observed in practice: a thorough model can
+/// keep investigating (or get slowed by rate-limit retries eating the ambient
+/// clock) right up to the cap without ever calling submit_findings, silently
+/// discarding everything it already confirmed.
+const FORCE_CONCLUDE_WITHIN: u32 = 3;
+
+/// Collapses all but the most recent `KEEP_RECENT_TOOL_RESULTS` tool-result
+/// messages down to a short placeholder, bounding how much the conversation
+/// grows per request regardless of how many tool calls the session makes.
+fn trim_old_tool_results(messages: &mut [ChatMessage]) {
+    let tool_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == "tool")
+        .map(|(i, _)| i)
+        .collect();
+
+    if tool_indices.len() <= KEEP_RECENT_TOOL_RESULTS {
+        return;
+    }
+
+    let cutoff = tool_indices.len() - KEEP_RECENT_TOOL_RESULTS;
+    for &i in &tool_indices[..cutoff] {
+        let already_trimmed = messages[i].content.as_deref() == Some(TRIMMED_PLACEHOLDER);
+        if !already_trimmed {
+            messages[i].content = Some(TRIMMED_PLACEHOLDER.to_string());
+        }
+    }
+}
 
 /// Drives one scan session against a real (or test) LLM client. Emission is
 /// decoupled from Tauri via a plain callback so this can run — and be tested —
@@ -55,6 +94,8 @@ pub async fn run_scan_session(
         if cancel.is_cancelled() {
             break;
         }
+
+        trim_old_tool_results(&mut messages);
 
         let response = match client.chat_completion(messages.clone(), tools.clone()).await {
             Ok(r) => r,
@@ -148,6 +189,15 @@ pub async fn run_scan_session(
 
         if submitted || cancel.is_cancelled() {
             break;
+        }
+
+        let remaining = MAX_ITERATIONS.saturating_sub(iteration + 1);
+        if remaining <= FORCE_CONCLUDE_WITHIN && remaining > 0 {
+            messages.push(ChatMessage::user(format!(
+                "You have {remaining} tool call(s) left in this session. Stop investigating further and call \
+                 submit_findings now with everything you've confirmed so far — an empty array if genuinely nothing \
+                 was found, but do not let confirmed findings go unreported."
+            )));
         }
     }
 

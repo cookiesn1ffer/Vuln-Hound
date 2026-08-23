@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronRight, Loader2, PlayCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight, Loader2, PlayCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { SeverityDot } from "@/components/findings/SeverityBadge";
@@ -42,8 +42,19 @@ export function GroupCard({
       <div className="mt-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
           {totalFindings === 0 ? (
-            <span className="text-[11px] text-muted-foreground">
-              {state.status === "scanning" ? "Scanning…" : state.status === "idle" ? "Not tested" : "No issues"}
+            <span
+              className={cn(
+                "text-[11px]",
+                state.status === "error" ? "text-severity-critical" : "text-muted-foreground"
+              )}
+            >
+              {state.status === "scanning"
+                ? "Scanning…"
+                : state.status === "idle"
+                  ? "Not tested"
+                  : state.status === "error"
+                    ? "Scan failed"
+                    : "No issues"}
             </span>
           ) : (
             SEVERITY_ORDER.filter((sev) => state.counts[sev] > 0).map((sev) => (
@@ -77,5 +88,6 @@ export function GroupCard({
 function StatusIcon({ status }: { status: GroupRunState["status"] }) {
   if (status === "scanning") return <Loader2 className="size-3.5 shrink-0 animate-spin text-accent" />;
   if (status === "scanned") return <CheckCircle2 className="size-3.5 shrink-0 text-muted-foreground" />;
+  if (status === "error") return <AlertCircle className="size-3.5 shrink-0 text-severity-critical" />;
   return <span className="size-3.5 shrink-0 rounded-full border border-border" />;
 }

@@ -1,7 +1,8 @@
 //! Live integration test that drives the real scan loop against a real local
 //! LLM (Ollama/LM Studio) and the seeded fixture app. Not run in normal CI —
 //! requires a locally running OpenAI-compatible server, so it's `#[ignore]`d
-//! by default. Run explicitly with:
+//! by default. Reads config from the repo-root `.env` (see `.env.example`),
+//! or override inline:
 //!
 //!   VULN_HOUND_TEST_BASE_URL=http://localhost:11434/v1 \
 //!   VULN_HOUND_TEST_MODEL=huihui_ai/dolphin3-abliterated:8b \
@@ -18,9 +19,17 @@ use vuln_hound_lib::llm::client::OpenAiCompatClient;
 use vuln_hound_lib::playbook::load_playbook;
 use vuln_hound_lib::security::mode::ScanMode;
 
+/// Loads `.env` from the repo root (one level up from `src-tauri`) so the
+/// test env vars don't need to be exported by hand every run.
+fn load_env() {
+    let env_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join(".env");
+    let _ = dotenvy::from_path(env_path);
+}
+
 #[tokio::test]
 #[ignore]
 async fn live_scan_finds_seeded_issues() {
+    load_env();
     let base_url = std::env::var("VULN_HOUND_TEST_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:11434/v1".to_string());
     let model = std::env::var("VULN_HOUND_TEST_MODEL")
