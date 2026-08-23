@@ -97,7 +97,10 @@ pub async fn run_scan_session(
 
         trim_old_tool_results(&mut messages);
 
-        let response = match client.chat_completion(messages.clone(), tools.clone()).await {
+        let response = match client
+            .chat_completion(messages.clone(), tools.clone())
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 emit(ScanEvent::Error {
@@ -118,7 +121,11 @@ pub async fn run_scan_session(
 
         let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
         if tool_calls.is_empty() {
-            if let Some(text) = assistant_msg.content.as_deref().filter(|t| !t.trim().is_empty()) {
+            if let Some(text) = assistant_msg
+                .content
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+            {
                 let preview: String = text.chars().take(240).collect();
                 emit(ScanEvent::Log {
                     session_id: session_id.clone(),
@@ -142,16 +149,14 @@ pub async fn run_scan_session(
 
             match call.function.name.as_str() {
                 tool_registry::SUBMIT_FINDINGS => {
-                    let args: SubmitFindingsArgs =
-                        serde_json::from_str(&call.function.arguments).unwrap_or(SubmitFindingsArgs {
-                            findings: vec![],
-                        });
+                    let args: SubmitFindingsArgs = serde_json::from_str(&call.function.arguments)
+                        .unwrap_or(SubmitFindingsArgs { findings: vec![] });
                     for submitted_finding in args.findings {
                         let finding = Finding::from_submitted(&group_id, submitted_finding);
                         emit(ScanEvent::Finding {
                             session_id: session_id.clone(),
                             group_id: group_id.clone(),
-                            finding,
+                            finding: Box::new(finding),
                         });
                     }
                     submitted = true;

@@ -21,7 +21,7 @@ pub enum ScanEvent {
         session_id: String,
         #[serde(rename = "groupId")]
         group_id: String,
-        finding: Finding,
+        finding: Box<Finding>,
     },
     #[serde(rename = "log")]
     Log {

@@ -73,7 +73,11 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for group in &playbook.groups {
             for entry in &group.entries {
-                assert!(ids.insert(entry.id.clone()), "duplicate entry id: {}", entry.id);
+                assert!(
+                    ids.insert(entry.id.clone()),
+                    "duplicate entry id: {}",
+                    entry.id
+                );
             }
         }
     }

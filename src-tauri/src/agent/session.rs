@@ -11,7 +11,10 @@ pub struct SessionRegistry {
 impl SessionRegistry {
     pub fn register(&self, session_id: String) -> CancellationToken {
         let token = CancellationToken::new();
-        self.tokens.lock().unwrap().insert(session_id, token.clone());
+        self.tokens
+            .lock()
+            .unwrap()
+            .insert(session_id, token.clone());
         token
     }
 

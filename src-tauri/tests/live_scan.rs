@@ -22,7 +22,10 @@ use vuln_hound_lib::security::mode::ScanMode;
 /// Loads `.env` from the repo root (one level up from `src-tauri`) so the
 /// test env vars don't need to be exported by hand every run.
 fn load_env() {
-    let env_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join(".env");
+    let env_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".env");
     let _ = dotenvy::from_path(env_path);
 }
 
@@ -42,7 +45,10 @@ async fn live_scan_finds_seeded_issues() {
         .parent()
         .unwrap()
         .join("fixtures/vulnerable-sample-app");
-    assert!(fixture_dir.exists(), "fixture dir must exist: {fixture_dir:?}");
+    assert!(
+        fixture_dir.exists(),
+        "fixture dir must exist: {fixture_dir:?}"
+    );
 
     let playbook = load_playbook().expect("bundled playbook must parse");
     let group = playbook
@@ -91,7 +97,10 @@ async fn live_scan_finds_seeded_issues() {
     });
     println!("\nfinal status: {final_status:?}");
 
-    assert!(!findings.is_empty(), "expected the model to find at least one seeded issue");
+    assert!(
+        !findings.is_empty(),
+        "expected the model to find at least one seeded issue"
+    );
     assert!(
         findings.iter().any(|f| f.category_id == "sql-injection"),
         "expected the seeded SQL injection in server.js to be found"

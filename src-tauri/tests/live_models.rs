@@ -9,7 +9,10 @@ use vuln_hound_lib::llm::client::fetch_provider_models;
 /// Loads `.env` from the repo root (one level up from `src-tauri`) so the
 /// test env vars don't need to be exported by hand every run.
 fn load_env() {
-    let env_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join(".env");
+    let env_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".env");
     let _ = dotenvy::from_path(env_path);
 }
 
@@ -29,7 +32,11 @@ async fn lists_models_from_opencode_zen() {
     let models = fetch_provider_models("https://opencode.ai/zen/v1", None)
         .await
         .expect("OpenCode Zen models list should be public");
-    println!("OpenCode Zen: {} models, first 5: {:?}", models.len(), &models[..5.min(models.len())]);
+    println!(
+        "OpenCode Zen: {} models, first 5: {:?}",
+        models.len(),
+        &models[..5.min(models.len())]
+    );
     assert!(!models.is_empty());
 }
 
@@ -39,7 +46,11 @@ async fn lists_models_from_opencode_go() {
     let models = fetch_provider_models("https://opencode.ai/zen/go/v1", None)
         .await
         .expect("OpenCode Go models list should be public");
-    println!("OpenCode Go: {} models, first 5: {:?}", models.len(), &models[..5.min(models.len())]);
+    println!(
+        "OpenCode Go: {} models, first 5: {:?}",
+        models.len(),
+        &models[..5.min(models.len())]
+    );
     assert!(!models.is_empty());
 }
 

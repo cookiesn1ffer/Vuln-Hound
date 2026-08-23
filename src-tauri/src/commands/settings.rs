@@ -53,9 +53,7 @@ pub async fn test_provider_connection(app: tauri::AppHandle) -> Result<String, S
     let api_key = secrets::get_api_key(&settings.provider_id).ok();
 
     let client = OpenAiCompatClient::new(settings.base_url, api_key, settings.model);
-    let messages = vec![ChatMessage::user(
-        "Reply with exactly the single word: OK",
-    )];
+    let messages = vec![ChatMessage::user("Reply with exactly the single word: OK")];
 
     let response = client
         .chat_completion(messages, vec![])

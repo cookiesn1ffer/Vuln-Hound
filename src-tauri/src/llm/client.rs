@@ -28,7 +28,11 @@ pub struct OpenAiCompatClient {
 }
 
 impl OpenAiCompatClient {
-    pub fn new(base_url: impl Into<String>, api_key: Option<String>, model: impl Into<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        api_key: Option<String>,
+        model: impl Into<String>,
+    ) -> Self {
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
@@ -50,7 +54,8 @@ impl OpenAiCompatClient {
         // far more than it needs creative variation. Smaller local models in
         // particular get noticeably flakier about calling tools at all with the
         // provider's (often ~0.7-1.0) sampling default.
-        self.chat_completion_with_temperature(messages, tools, 0.2).await
+        self.chat_completion_with_temperature(messages, tools, 0.2)
+            .await
     }
 
     pub async fn chat_completion_with_temperature(
@@ -78,8 +83,11 @@ impl OpenAiCompatClient {
         // the *next* token to free up, not for the full size of this specific
         // request — so a retry that hits 429 again on the same request needs to
         // wait longer than what was suggested last time, not the same amount.
-        const BACKOFF_FLOORS: [Duration; 3] =
-            [Duration::from_secs(1), Duration::from_secs(4), Duration::from_secs(10)];
+        const BACKOFF_FLOORS: [Duration; 3] = [
+            Duration::from_secs(1),
+            Duration::from_secs(4),
+            Duration::from_secs(10),
+        ];
         let mut attempt = 0;
 
         loop {
@@ -147,7 +155,9 @@ fn retry_after_from_body(body: &str) -> Option<Duration> {
         .take_while(|c| c.is_ascii_digit() || *c == '.')
         .collect();
     let seconds: f64 = numeric.parse().ok()?;
-    Some(Duration::from_millis(((seconds * 1000.0) as u64).clamp(250, 30_000)))
+    Some(Duration::from_millis(
+        ((seconds * 1000.0) as u64).clamp(250, 30_000),
+    ))
 }
 
 /// A listing endpoint should respond quickly or not at all — no reason to make

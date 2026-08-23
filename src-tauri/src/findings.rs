@@ -44,9 +44,17 @@ pub struct Finding {
     pub fix_guidance: String,
     #[serde(default, rename = "fixDiff", skip_serializing_if = "Option::is_none")]
     pub fix_diff: Option<String>,
-    #[serde(default, rename = "fixSummary", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "fixSummary",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub fix_summary: Option<String>,
-    #[serde(default, rename = "reverifyResult", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "reverifyResult",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub reverify_result: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,
