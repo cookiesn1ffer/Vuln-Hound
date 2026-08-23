@@ -21,9 +21,11 @@ src-tauri/gen
 .env.*
 !.env.example
 
+# Claude Code project files (local only)
+.claude
+
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+.vscode
 .idea
 .DS_Store
 *.suo
